@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Pet Screen Protector",
+  "description": "A local pet screen-time protector for Chrome.",
+  "version": "0.1.0",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Pet Screen Protector"
+  },
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "permissions": ["alarms", "scripting", "storage", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["assets/contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
