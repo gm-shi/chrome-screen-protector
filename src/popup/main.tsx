@@ -6,6 +6,9 @@ import type { PetProtectorSettings, RuntimeMessage, RuntimeResponse } from "../t
 import "./styles.css";
 
 const PROTECTOR_MAX_MINUTES = 5;
+const MIN_PROTECTOR_IMAGE_LONG_EDGE = 2560;
+const MAX_PROTECTOR_IMAGE_LONG_EDGE = 4096;
+const PROTECTOR_IMAGE_QUALITY = 0.95;
 
 function App() {
   const [settings, setSettings] = useState<PetProtectorSettings>(DEFAULT_SETTINGS);
@@ -64,7 +67,7 @@ function App() {
     setError(null);
 
     try {
-      const imageDataUrl = await resizeImage(file, 900);
+      const imageDataUrl = await resizeImage(file, await getProtectorImageLongEdge());
       await updateSettings({ petImageDataUrl: imageDataUrl });
     } catch (uploadError) {
       setError(getErrorMessage(uploadError));
@@ -244,7 +247,29 @@ async function resizeImage(file: File, maxSize: number): Promise<string> {
   }
 
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/webp", 0.86);
+  return canvas.toDataURL("image/webp", PROTECTOR_IMAGE_QUALITY);
+}
+
+async function getProtectorImageLongEdge(): Promise<number> {
+  const display = await getPrimaryDisplay();
+  const displayLongEdge = display ? Math.max(display.bounds.width, display.bounds.height) : 0;
+  const screenLongEdge = Math.max(window.screen.width, window.screen.height) * window.devicePixelRatio;
+  const detectedLongEdge = Math.max(displayLongEdge, screenLongEdge);
+  const targetLongEdge = Math.max(MIN_PROTECTOR_IMAGE_LONG_EDGE, Math.ceil(detectedLongEdge));
+  return Math.min(MAX_PROTECTOR_IMAGE_LONG_EDGE, targetLongEdge);
+}
+
+async function getPrimaryDisplay(): Promise<chrome.system.display.DisplayUnitInfo | null> {
+  if (!chrome.system?.display?.getInfo) {
+    return null;
+  }
+
+  try {
+    const displays = await chrome.system.display.getInfo();
+    return displays.find((display) => display.isPrimary) ?? displays[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {

@@ -5,6 +5,7 @@ A local-only Manifest V3 Chrome extension that lets you upload one pet image, st
 ## What it does
 
 - Upload or replace one pet image from the popup.
+- Store the pet image at screen-friendly quality based on Chrome display metadata.
 - Set screen time in minutes.
 - Set protector duration from 1 to 5 minutes.
 - When the timer ends, open web pages receive a full-page animated pet protector.
