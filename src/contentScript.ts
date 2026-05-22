@@ -13,7 +13,12 @@ if (!window[LISTENER_FLAG]) {
   window[LISTENER_FLAG] = true;
   chrome.runtime.onMessage.addListener((message: RuntimeMessage) => {
     if (message.type === "SHOW_PROTECTOR") {
-      showProtector(message.payload.petImageDataUrl, message.payload.protectorDurationMinutes);
+      showProtector(
+        message.payload.mediaDataUrl,
+        message.payload.mediaType,
+        message.payload.mediaDurationSeconds,
+        message.payload.protectorDurationMinutes
+      );
     }
 
     if (message.type === "HIDE_PROTECTOR") {
@@ -22,9 +27,15 @@ if (!window[LISTENER_FLAG]) {
   });
 }
 
-function showProtector(petImageDataUrl: string | null, durationMinutes: number): void {
+function showProtector(
+  mediaDataUrl: string | null,
+  mediaType: "image" | "video",
+  mediaDurationSeconds: number | null,
+  durationMinutes: number
+): void {
   hideProtector();
 
+  const protectorStartedAt = Date.now();
   const root = document.createElement("div");
   root.id = ROOT_ID;
   root.setAttribute("role", "dialog");
@@ -56,16 +67,20 @@ function showProtector(petImageDataUrl: string | null, durationMinutes: number):
       position: absolute;
       top: 20px;
       right: 20px;
-      width: 42px;
+      z-index: 2;
+      min-width: 112px;
       height: 42px;
+      padding: 0 16px;
       border: 1px solid rgba(255, 255, 255, 0.3);
       border-radius: 999px;
       color: #ffffff;
       background: rgba(15, 23, 42, 0.45);
       cursor: pointer;
-      font-size: 28px;
+      font-size: 14px;
+      font-weight: 800;
       line-height: 1;
       backdrop-filter: blur(14px);
+      box-shadow: 0 14px 38px rgba(0, 0, 0, 0.26);
     }
 
     #${ROOT_ID} .pet-protector-scene {
@@ -73,10 +88,13 @@ function showProtector(petImageDataUrl: string | null, durationMinutes: number):
       inset: -3%;
       display: grid;
       place-items: center;
+    }
+
+    #${ROOT_ID} .pet-protector-scene.is-image {
       animation: petSceneDrift 18s ease-in-out infinite alternate;
     }
 
-    #${ROOT_ID} .pet-protector-scene::after {
+    #${ROOT_ID} .pet-protector-scene.is-image::after {
       content: "";
       position: absolute;
       inset: 0;
@@ -86,13 +104,16 @@ function showProtector(petImageDataUrl: string | null, durationMinutes: number):
       pointer-events: none;
     }
 
-    #${ROOT_ID} .pet-protector-image-wrap {
+    #${ROOT_ID} .pet-protector-media-wrap {
       width: 100%;
       height: 100%;
+    }
+
+    #${ROOT_ID} .pet-protector-media-wrap.is-image {
       animation: petBreathing 8s ease-in-out infinite;
     }
 
-    #${ROOT_ID} .pet-protector-image {
+    #${ROOT_ID} .pet-protector-media {
       width: 100%;
       height: 100%;
       object-fit: cover;
@@ -128,6 +149,25 @@ function showProtector(petImageDataUrl: string | null, durationMinutes: number):
       backdrop-filter: blur(14px);
     }
 
+    #${ROOT_ID} .pet-protector-timer {
+      position: absolute;
+      right: 20px;
+      bottom: 20px;
+      z-index: 2;
+      min-width: 112px;
+      padding: 10px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      border-radius: 999px;
+      color: #ffffff;
+      background: rgba(15, 23, 42, 0.42);
+      text-align: center;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 14px 38px rgba(0, 0, 0, 0.22);
+    }
+
     @keyframes petSceneDrift {
       from { transform: translate3d(-1.5vw, -1vh, 0) scale(1.01); }
       to { transform: translate3d(1.5vw, 1vh, 0) scale(1.04); }
@@ -143,42 +183,82 @@ function showProtector(petImageDataUrl: string | null, durationMinutes: number):
   closeButton.type = "button";
   closeButton.className = "pet-protector-close";
   closeButton.setAttribute("aria-label", "Dismiss pet screen protector");
-  closeButton.textContent = "×";
+  closeButton.textContent = "Dismiss";
   closeButton.addEventListener("click", requestHideProtector);
 
   const scene = document.createElement("div");
-  scene.className = "pet-protector-scene";
+  scene.className = `pet-protector-scene is-${mediaType}`;
 
-  const imageWrap = document.createElement("div");
-  imageWrap.className = "pet-protector-image-wrap";
+  const mediaWrap = document.createElement("div");
+  mediaWrap.className = `pet-protector-media-wrap is-${mediaType}`;
 
-  if (petImageDataUrl) {
+  if (mediaDataUrl && mediaType === "video") {
+    const video = document.createElement("video");
+    video.className = "pet-protector-media";
+    video.src = mediaDataUrl;
+    video.autoplay = true;
+    video.loop = false;
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute("aria-label", "Uploaded pet video");
+    mediaWrap.append(video);
+    void video.play().catch(() => undefined);
+  } else if (mediaDataUrl) {
     const image = document.createElement("img");
-    image.className = "pet-protector-image";
-    image.src = petImageDataUrl;
+    image.className = "pet-protector-media";
+    image.src = mediaDataUrl;
     image.alt = "Uploaded pet";
-    imageWrap.append(image);
+    mediaWrap.append(image);
   } else {
     const placeholder = document.createElement("div");
     placeholder.className = "pet-protector-placeholder";
     placeholder.textContent = "PET";
-    imageWrap.append(placeholder);
+    mediaWrap.append(placeholder);
   }
 
   const caption = document.createElement("div");
   caption.className = "pet-protector-caption";
-  caption.textContent = `Screen protector active for up to ${durationMinutes} minute${durationMinutes === 1 ? "" : "s"}.`;
+  caption.textContent =
+    mediaType === "video"
+      ? `Video screen protector${mediaDurationSeconds ? ` (${formatDuration(mediaDurationSeconds)})` : ""}.`
+      : `Screen protector active for up to ${durationMinutes} minute${durationMinutes === 1 ? "" : "s"}.`;
 
-  scene.append(imageWrap);
-  root.append(styles, closeButton, scene, caption);
+  const timer = document.createElement("div");
+  timer.className = "pet-protector-timer";
+  timer.textContent = "00:00";
+  const intervalId = window.setInterval(() => {
+    timer.textContent = formatElapsedMs(Date.now() - protectorStartedAt);
+  }, 1000);
+  root.dataset.timerId = String(intervalId);
+
+  scene.append(mediaWrap);
+  root.append(styles, closeButton, scene, caption, timer);
   document.documentElement.append(root);
 }
 
 function hideProtector(): void {
-  document.getElementById(ROOT_ID)?.remove();
+  const root = document.getElementById(ROOT_ID);
+  const timerId = root?.dataset.timerId;
+  if (timerId) {
+    window.clearInterval(Number(timerId));
+  }
+
+  root?.remove();
 }
 
 function requestHideProtector(): void {
   hideProtector();
   void chrome.runtime.sendMessage({ type: "HIDE_PROTECTOR" } satisfies RuntimeMessage);
+}
+
+function formatDuration(seconds: number): string {
+  const roundedSeconds = Math.max(1, Math.round(seconds));
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainingSeconds = roundedSeconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
+function formatElapsedMs(milliseconds: number): string {
+  const remainingSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  return formatDuration(remainingSeconds);
 }

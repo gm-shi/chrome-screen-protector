@@ -1,3 +1,4 @@
+import { blobToDataUrl, getActiveMedia } from "./mediaStore";
 import { clampMinutes, getSettings, patchSettings } from "./storage";
 import type { RuntimeMessage, RuntimeResponse } from "./types";
 
@@ -78,6 +79,10 @@ async function handleMessage(message: RuntimeMessage): Promise<RuntimeResponse> 
 async function showProtectorOnAllTabs(): Promise<void> {
   const settings = await getSettings();
   const protectorDurationMinutes = clampMinutes(settings.protectorDurationMinutes, 1, PROTECTOR_MAX_MINUTES);
+  const activeMedia = await getActiveMedia();
+  const mediaDataUrl = activeMedia ? await blobToDataUrl(activeMedia.blob) : settings.petImageDataUrl;
+  const mediaType = activeMedia?.mediaType ?? settings.mediaType;
+  const mediaDurationSeconds = activeMedia?.durationSeconds ?? settings.mediaDurationSeconds;
 
   await patchSettings({
     timerStatus: "protecting",
@@ -86,7 +91,9 @@ async function showProtectorOnAllTabs(): Promise<void> {
   });
 
   await chrome.alarms.clear(HIDE_PROTECTOR_ALARM);
-  await chrome.alarms.create(HIDE_PROTECTOR_ALARM, { delayInMinutes: protectorDurationMinutes });
+  if (mediaType === "image") {
+    await chrome.alarms.create(HIDE_PROTECTOR_ALARM, { delayInMinutes: protectorDurationMinutes });
+  }
 
   const tabs = await chrome.tabs.query({ windowType: "normal" });
   await Promise.allSettled(
@@ -94,7 +101,9 @@ async function showProtectorOnAllTabs(): Promise<void> {
       sendOverlayMessage(tab.id, {
         type: "SHOW_PROTECTOR",
         payload: {
-          petImageDataUrl: settings.petImageDataUrl,
+          mediaDataUrl,
+          mediaDurationSeconds,
+          mediaType,
           protectorDurationMinutes
         }
       })

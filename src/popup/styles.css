@@ -90,7 +90,8 @@ h1 {
     linear-gradient(135deg, #ecf8f3, #f8f3e6);
 }
 
-.pet-preview img {
+.pet-preview img,
+.pet-preview video {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -170,9 +171,14 @@ h1 {
 }
 
 .number-row span,
-.range-row strong {
+.range-row strong,
+.field-note {
   color: #526b65;
   font-size: 13px;
+}
+
+.field-note {
+  margin: 0;
 }
 
 .range-row input {

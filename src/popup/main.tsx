@@ -1,6 +1,7 @@
 import React, { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Clock, ImagePlus, PauseCircle, Play, ShieldCheck, X } from "lucide-react";
+import { getActiveMedia, saveActiveMedia } from "../mediaStore";
 import { clampMinutes, DEFAULT_SETTINGS, getSettings, patchSettings } from "../storage";
 import type { PetProtectorSettings, RuntimeMessage, RuntimeResponse } from "../types";
 import "./styles.css";
@@ -9,9 +10,11 @@ const PROTECTOR_MAX_MINUTES = 5;
 const MIN_PROTECTOR_IMAGE_LONG_EDGE = 2560;
 const MAX_PROTECTOR_IMAGE_LONG_EDGE = 4096;
 const PROTECTOR_IMAGE_QUALITY = 0.95;
+const MAX_VIDEO_BYTES = 15 * 1024 * 1024;
 
 function App() {
   const [settings, setSettings] = useState<PetProtectorSettings>(DEFAULT_SETTINGS);
+  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -19,6 +22,14 @@ function App() {
   useEffect(() => {
     void refreshSettings();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (mediaPreviewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(mediaPreviewUrl);
+      }
+    };
+  }, [mediaPreviewUrl]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -45,9 +56,12 @@ function App() {
       if (response.settings) {
         setSettings(response.settings);
       }
+      await refreshMediaPreview(response.settings ?? null);
     } catch (refreshError) {
       setError(getErrorMessage(refreshError));
-      setSettings(await getSettings());
+      const fallbackSettings = await getSettings();
+      setSettings(fallbackSettings);
+      await refreshMediaPreview(fallbackSettings);
     } finally {
       setIsBusy(false);
     }
@@ -58,7 +72,21 @@ function App() {
     setSettings(nextSettings);
   }
 
-  async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
+  async function refreshMediaPreview(settings: PetProtectorSettings | null): Promise<void> {
+    const activeMedia = await getActiveMedia();
+    if (activeMedia) {
+      setPreviewObjectUrl(URL.createObjectURL(activeMedia.blob));
+      return;
+    }
+
+    setPreviewObjectUrl(settings?.petImageDataUrl ?? null);
+  }
+
+  function setPreviewObjectUrl(nextUrl: string | null): void {
+    setMediaPreviewUrl((previousUrl) => replacePreviewUrl(previousUrl, nextUrl));
+  }
+
+  async function handleMediaUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -67,8 +95,32 @@ function App() {
     setError(null);
 
     try {
-      const imageDataUrl = await resizeImage(file, await getProtectorImageLongEdge());
-      await updateSettings({ petImageDataUrl: imageDataUrl });
+      if (file.type.startsWith("video/")) {
+        if (file.size > MAX_VIDEO_BYTES) {
+          throw new Error("Please upload a video under 15 MB.");
+        }
+
+        const videoDurationSeconds = await getVideoDurationSeconds(file);
+        await saveActiveMedia(file, "video", file.name, videoDurationSeconds);
+        setMediaPreviewUrl((previousUrl) => replacePreviewUrl(previousUrl, URL.createObjectURL(file)));
+        await updateSettings({
+          mediaType: "video",
+          mediaName: file.name,
+          mediaDurationSeconds: videoDurationSeconds,
+          petImageDataUrl: null
+        });
+        return;
+      }
+
+      const imageBlob = await resizeImage(file, await getProtectorImageLongEdge());
+      await saveActiveMedia(imageBlob, "image", file.name, null);
+      setMediaPreviewUrl((previousUrl) => replacePreviewUrl(previousUrl, URL.createObjectURL(imageBlob)));
+      await updateSettings({
+        mediaType: "image",
+        mediaName: file.name,
+        mediaDurationSeconds: null,
+        petImageDataUrl: null
+      });
     } catch (uploadError) {
       setError(getErrorMessage(uploadError));
     } finally {
@@ -136,20 +188,26 @@ function App() {
       </header>
 
       <section className="pet-preview" aria-label="Pet image">
-        {settings.petImageDataUrl ? (
-          <img src={settings.petImageDataUrl} alt="Uploaded pet" />
+        {mediaPreviewUrl && settings.mediaType === "video" ? (
+          <video src={mediaPreviewUrl} aria-label="Uploaded pet video" muted loop playsInline controls />
+        ) : mediaPreviewUrl ?? settings.petImageDataUrl ? (
+          <img src={mediaPreviewUrl ?? settings.petImageDataUrl ?? ""} alt="Uploaded pet" />
         ) : (
           <div className="empty-pet">
             <ImagePlus size={36} aria-hidden="true" />
-            <span>Add a pet image</span>
+            <span>Add a pet image or video</span>
           </div>
         )}
       </section>
 
       <label className="upload-button">
         <ImagePlus size={18} aria-hidden="true" />
-        Upload or replace pet image
-        <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleImageUpload} />
+        Upload or replace pet media
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime"
+          onChange={handleMediaUpload}
+        />
       </label>
 
       <section className="controls" aria-label="Timer settings">
@@ -174,26 +232,38 @@ function App() {
           </div>
         </label>
 
-        <label className="field">
-          <span>
-            <PauseCircle size={16} aria-hidden="true" />
-            Protector duration
-          </span>
-          <div className="range-row">
-            <input
-              min={1}
-              max={PROTECTOR_MAX_MINUTES}
-              type="range"
-              value={settings.protectorDurationMinutes}
-              onChange={(event) =>
-                void updateSettings({
-                  protectorDurationMinutes: clampMinutes(Number(event.target.value), 1, PROTECTOR_MAX_MINUTES)
-                })
-              }
-            />
-            <strong>{settings.protectorDurationMinutes} min</strong>
+        {settings.mediaType === "image" ? (
+          <label className="field">
+            <span>
+              <PauseCircle size={16} aria-hidden="true" />
+              Protector duration
+            </span>
+            <div className="range-row">
+              <input
+                min={1}
+                max={PROTECTOR_MAX_MINUTES}
+                type="range"
+                value={settings.protectorDurationMinutes}
+                onChange={(event) =>
+                  void updateSettings({
+                    protectorDurationMinutes: clampMinutes(Number(event.target.value), 1, PROTECTOR_MAX_MINUTES)
+                  })
+                }
+              />
+              <strong>{settings.protectorDurationMinutes} min</strong>
+            </div>
+          </label>
+        ) : (
+          <div className="field">
+            <span>
+              <PauseCircle size={16} aria-hidden="true" />
+              Protector duration
+            </span>
+            <p className="field-note">
+              Video protector stays until dismissed. Timer starts at 00:00.
+            </p>
           </div>
-        </label>
+        )}
       </section>
 
       {error ? (
@@ -229,7 +299,7 @@ async function sendMessage(message: RuntimeMessage): Promise<RuntimeResponse> {
   return response;
 }
 
-async function resizeImage(file: File, maxSize: number): Promise<string> {
+async function resizeImage(file: File, maxSize: number): Promise<Blob> {
   if (!file.type.startsWith("image/")) {
     throw new Error("Please upload an image file.");
   }
@@ -247,7 +317,12 @@ async function resizeImage(file: File, maxSize: number): Promise<string> {
   }
 
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/webp", PROTECTOR_IMAGE_QUALITY);
+  const blob = await canvasToBlob(canvas);
+  if (!blob) {
+    throw new Error("Could not compress this image.");
+  }
+
+  return blob;
 }
 
 async function getProtectorImageLongEdge(): Promise<number> {
@@ -278,6 +353,53 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.addEventListener("load", () => resolve(String(reader.result)));
     reader.addEventListener("error", () => reject(new Error("Could not read this image.")));
     reader.readAsDataURL(file);
+  });
+}
+
+function getVideoDurationSeconds(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    const objectUrl = URL.createObjectURL(file);
+
+    video.preload = "metadata";
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve(Number.isFinite(video.duration) ? video.duration : null);
+      },
+      { once: true }
+    );
+    video.addEventListener(
+      "error",
+      () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve(null);
+      },
+      { once: true }
+    );
+    video.src = objectUrl;
+  });
+}
+
+function formatDuration(seconds: number): string {
+  const roundedSeconds = Math.max(1, Math.round(seconds));
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainingSeconds = roundedSeconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
+function replacePreviewUrl(previousUrl: string | null, nextUrl: string | null): string | null {
+  if (previousUrl?.startsWith("blob:")) {
+    URL.revokeObjectURL(previousUrl);
+  }
+
+  return nextUrl;
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob(resolve, "image/webp", PROTECTOR_IMAGE_QUALITY);
   });
 }
 

@@ -4,6 +4,9 @@ export const SETTINGS_KEY = "petProtectorSettings";
 
 export const DEFAULT_SETTINGS: PetProtectorSettings = {
   petImageDataUrl: null,
+  mediaType: "image",
+  mediaName: null,
+  mediaDurationSeconds: null,
   screenTimeMinutes: 25,
   protectorDurationMinutes: 1,
   timerStatus: "idle",
@@ -12,9 +15,13 @@ export const DEFAULT_SETTINGS: PetProtectorSettings = {
 
 export async function getSettings(): Promise<PetProtectorSettings> {
   const result = await chrome.storage.local.get(SETTINGS_KEY);
+  const savedSettings = result[SETTINGS_KEY] as Partial<PetProtectorSettings> | undefined;
+  const legacyImageDataUrl = savedSettings?.petImageDataUrl ?? null;
+
   return {
     ...DEFAULT_SETTINGS,
-    ...(result[SETTINGS_KEY] as Partial<PetProtectorSettings> | undefined)
+    ...savedSettings,
+    mediaType: savedSettings?.mediaType ?? "image"
   };
 }
 
